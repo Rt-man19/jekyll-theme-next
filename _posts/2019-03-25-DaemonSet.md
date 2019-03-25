@@ -1,9 +1,23 @@
-[toc]
+
+---
+
+title: DaemonSet
+
+categories:
+
+- Container
+
+tags:
+
+---
+
+
 
 ### DaemonSet的意义和特点
 
 **DaemonSet**
 DaemonSet的主要作用就是让你在kubernetes集群中运行一个Daemon Pod，这个Pod主要有三个特征:
+
 - 这个Pod运行在kubernetes进群里的每一个节点(Node)上
 - 每个节点上只有一个这样的Pod实例;
 - 当有新的节点加入Kubernetes集群后该Pod会自动的在新节点上被创建出来;而当旧节点被删除后,节点上面的Pod 也会被回收

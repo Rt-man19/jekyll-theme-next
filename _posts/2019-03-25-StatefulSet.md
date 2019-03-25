@@ -1,16 +1,22 @@
-[TOC]
+---
 
-**deployment的问题**
+title: StatefulSet
+
+categories:
+
+- Container
+
+tags:
+
+---
+
+# deployment的问题
 
 Deployment实际上并不满足所有的应用编排问题.其根本问题原因在于Deployment对应用做了一个简单的假设，它认为一个应用的所有Pod是完全一样的所以他们之间没有相互顺序也无所谓运行在哪台宿主机上。需要的时候Deployment就可以通过Pod模板创建新的Pod不需要的时候Deployment就可以杀掉任意一个Pod。
 
 但是实际场景中并不是所有的应用都可以满足这样的要求，尤其是分布式应用，它的多个实例之间往往有依赖关系，比如主从关系，主备关系。 还有就是数据存储类应用，它的多个实例往往都会在本地磁盘保存一份数据，而这些实例一旦被杀掉，即便重建出来，实例与数据之间的对应关系也已经丢失，从而导致应用失败.
 
-
----
-
-
-### StatefulSet的工作原理
+# StatefulSet的工作原理
 
 StatefulSet这个控制器的主要作用之一就是使用Pod模板创建Pod的时候对他们进行编号,按照编号顺序逐一完成创建工作。而当StatefulSet的控制循环发现Pod的实际状态与期望状态不符时，需要新建或者删除Pod进行协调的时候它会严格按照这些Pod编号的顺序逐一完成这些操作
 
@@ -21,13 +27,14 @@ StatefulSet的设计非常容易理解，它把真实世界里的应用状态抽
 
 **StatefulSet的核心功能就是通过某种方式记录这些状态,然后在Pod被重新创建时,能够为新Pod恢复这些状态**
 
-#### 拓扑状态
+## 拓扑状态
 
-##### Headless Service
+### Headless Service
 
 Service 是kubernetes项目中用来将一组Pod暴露给外界访问的一种机制
 
 **Service被访问的方式**
+
 - **以Service的VIP(Virtual IP)方式** 比如:当我访问10.0.23.1这个Service的IP地址时,10.0.23.1其实就是一个VIP，它会把具体请求转发到该Service所代理的某一个Pod上
 - **以Service的DNS方式** 比如: 只要我访问"my-svc.my-namespace.svc.cluster.local"这条DNS记录就能访问到名叫my-svc的Service所代理的某一个Pod
 
@@ -41,6 +48,7 @@ Service 是kubernetes项目中用来将一组Pod暴露给外界访问的一种�
 
 ***Headless Service 的yaml文件***
 svc.yaml
+
 ```yaml
 apiVersion: v1
 kind: Service
@@ -59,6 +67,7 @@ spec:
 
 所谓的Headless Service，仍是一个标准Service的YAML文件,只不过它的clusterIP字段为None。这个Service没有一个VIP作为"头".所以这个Service被创建之后不会被分配一个VIP，而是会以DNS记录的方式暴露出它所代理的Pod。像这个yaml文件的定义中，它所代理的Pod就是携带了app=nginx标签的Pod。
 按照这种方式创建了一个Headless Service之后,它所代理的所有Pod的IP地址都会被绑定一个这样格式的DNS记录:
+
 ```text
 <pod-name>.<svc-name>.<namespace>.svc.cluster.local
 这个DNS记录正是kubernetes为Pod分配的唯一的"可解析身份"(Resolvable Identify)
@@ -92,6 +101,7 @@ spec:
 ```
 在这个yaml文件中，和之前的nginx-deployment(deployment笔记中的例子)的唯一区别,就是多了一个serviceName=nginx字段
 这个字段的作用就是告诉StatefulSet控制器,在执行控制循环(control loop)的时候,请使用nginx这个Headless Service来保证Pod的"可解析身份"
+
 ```shell
 # kubectl create -f svc.yaml
 # kubectl get service nginx
@@ -142,10 +152,7 @@ Address 1: 10.244.1.44 web-1.nginx.default.svc.cluster.local
 ```
 可以看到在这个StatefulSet中这两个新Pod的网络标识(web-0.nginx和web-1.nginx)再次解析到了正确的IP地址.通过这种方式kubernetes就可以成功的将Pod的拓扑状态按照Pod的"名字"+"编号"的方式固定下来，此外Kubernetes还为每一个Pod提供了一个固定并且唯一的访问入口,即:这个Pod对应的DNS记录
 
-
-
-
-#### 存储状态
+## 存储状态
 
 StatefulSet对存储状态的管理机制主要使用的是一种叫做**Persistent Volume Claim**的功能
 
@@ -179,11 +186,13 @@ spec:
       imagefeatures: "layering"
 ```
 
-如果不懂得Ceph RBD的使用方法,那么这个Pod的Volumes字段也十有八九看不懂，对于应用开发者来说可能超出了他们的知识储备，而且还有暴露公司基础设施秘密的风险。这也是为什么在后来的演化中**Kubernetes项目引入了一组叫做Persistent Volume Claim(PVC)和Persistent Volume(PV)的API对象,大大降低了用户声明和使用持久化Volume的门槛**
+如果不懂得Ceph RBD的使用方法,那么这个Pod的Volumes字段也十有八九看不懂，有暴露公司基础设施秘密的风险。这也是为什么在后来的演化中**Kubernetes项目引入了一组叫做Persistent Volume Claim(PVC)和Persistent Volume(PV)的API对象,大大降低了用户声明和使用持久化Volume的门槛**
 PVC就是一种特殊的Volume，只不过一个PVC具体是什么类型的Volume，要跟某个PV绑定之后才知道。
 
-##### PVC的使用
+### PVC的使用
+
 <span id=1> 1. 定义一个PV对象，为PVC提供符合条件的Volume</span>
+
 ```yaml
 kind: PersistentVolume
 apiVersion: v1
@@ -226,6 +235,7 @@ spec:
 ```
 在这个PVC对象中，不需要任何关于Volumes细节的字段,只有描述性和定义。比如storage: 1Gi,表示想要的Volume大小至少是1GiB，accessModes: ReadWriteOnce,表示这个Volume是可读写的，并且最多只能再一个节点中挂载，不能多个节点共享
 对于哪种Volume支持哪些accessModes,Kubernetes官方文档中有[详细的列表](https://kubernetes.io/docs/concepts/storage/persistent-volumes/#access-modes)
+
 3. 在应用的Pod中声明使用这个PVC
 ```yaml
 apiVersion: v1
@@ -252,10 +262,11 @@ spec:
 
 **Kubernetes中PVC和PV的设计类似于"接口"和"实现"的思想** 开发者只要知道并会使用"接口"(PVC),而运维人员则负责给"接口"绑定具体的实现，即PV.这种解耦也避免了向开发者暴露过多的存储系统细节而带来的隐患。
 
+### StatefulSet对存储状态的管理
 
-##### StatefulSet对存储状态的管理
 PVC和PV的实现也让StatefulSet对存储状态的管理成为了可能
 以"拓扑状态"的例子来说:
+
 ```yaml
 apiVersion: apps/v1
 kind: StatefulSet
@@ -335,11 +346,7 @@ hello web-0
 分析一下StatefulSet控制器恢复这个Pod的过程就很容易理解了,
 首先，当把一个Pod(比如 web-0)删除之后，这个Pod对应的PVC和PV并不会被删除，而这个Volume里已经写入的数据也会保存在远程存储服务器。此时StatefulSet控制器发现实际状态与期望状态不一致，就会把删掉的Pod重新创建出来.注意，在心底Pod对象定义里，它声明使用的PVC的名字还是叫做www-web-0,这个PVC的定义是来自PVC模板(volumeClaimTemplates),这是StatefulSet创建Pod的标准流程。所以在新的web-0 Pod 被创建出来之后Kubernetes为它查找名叫www-web-0的PVC时,就会直接找到旧Pod对应的那个Volume，并且获取到保存在Volume里的数据。
 
-
-
-
-
-#### 总结
+# 总结
 
 梳理一下StatefulSet的工作原理
 
@@ -350,10 +357,9 @@ hello web-0
 
 **最后，StatefulSet还为每一个Pod分配并创建一个同样编号的PVC**  这样kubernetes就可以通过Persisten Volume机制为这个PVC绑定对应的PV,从而保证了每一个Pod都拥有一个独立的Volume.在这种情况下,即使Pod被删除,它所对应的PVC和PV已然会保留下来,所以当这个Pod被重新创建出来后,kubernetes会为他找到同样编号的PVC，挂载这个PVC对应的Volume,从而获取到之前保存在Volume里的数据
 
+# 实践: MySQL集群
 
-
-#### 实践: MySQL集群
-本实践来自Kubernetes官方文档
+本实践来自[Kubernetes官方文档](https://kubernetes.io/docs/tasks/run-application/run-replicated-stateful-application/)
 
 实践需求:
 1. 是一个"主从复制"(Master-Slave Replication)的MySQL集群
@@ -364,7 +370,7 @@ hello web-0
 6. 读操作可以在所有节点上执行
 
 这个需求可以用下面这张图来描述
-![image](10C546BBB8584E0C84E5EAA85423A167)
+![image](https://static001.geekbang.org/resource/image/bb/02/bb2d7f03443392ca40ecde6b1a91c002.png)
 
 在常规环境中,部署这样一个主从模式的MySQL集群的主要难点在于:如何让从节点能够拥有主节点的数据,即:如何配置主从节点的复制同步.
 
@@ -1028,3 +1034,4 @@ spec:
         requests:
           storage: 10Gi
 ```
+

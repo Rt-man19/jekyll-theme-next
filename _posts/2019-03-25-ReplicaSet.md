@@ -1,3 +1,19 @@
+---
+
+title: ReplicaSet
+
+categories:
+
+- Container
+
+tags:
+
+---
+
+#  什么是ReplicaSet
+
+## 简介
+
 ReplicaSet是下一代Replication Controller,ReplicaSet和Replication Controller的唯一区别就是选择器的支持。
 ReplicaSet支持基于集合的选择器，而Replication Controller只支持基于等式的选择器。
 
@@ -55,7 +71,7 @@ spec:
 ```
 可以看出,这个yaml定义的Pod的副本数量是3(spec.replicas=3)
 Deployment，ReplicaSet，以及Pod的关系可以用下面一张图表示:
-![image](85048CCDF6554904BD71E3E0E563C8B8)
+![image](https://static001.geekbang.org/resource/image/ab/cd/ab4902a0437af4347bec520468c5e7cd.png)
 
 这张图就可以清楚的看到，一个定义了replicas=3的Deployment与它的ReplicaSet以及Pod的关系实际上是一种层层控制的关系
 
@@ -67,10 +83,13 @@ kube scale deployment nginx-deployment --replicas=4
 deployment.apps/nginx-deployment scaled
 ```
 
-**滚动更新**
+# 发布流程
+
+## 滚动更新
 
 滚动更新就是将一个集群中正在运行的多个Pod版本，交替地逐一升级的过程
 通过上面的例子来描述滚动更新的过程:
+
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -95,12 +114,14 @@ spec:
         - containerPort: 80
 ```
 1.创建这个nginx-deployment:
+
 ```shell
 kubectl create -f nginx-deployment.yaml --record
 ```
 ***--record的作用是记录下每次操作所执行的命令***
 
 2.查看nginx-deployment的创建状态信息:
+
 ```shell
 $ kubectl get deployments
 NAME               DESIRED   CURRENT   UP-TO-DATE   AVAILABLE   AGE
@@ -158,7 +179,6 @@ deployment.extensions/nginx-deployment successfully rolled out
 ```
 用户可以使用kubectl describe deployment nginx-deployment查看Event，可以看到滚动更新的过程
 
-
 **滚动更新的特点:**
 
 1. 如果新版本的Pod有问题无法启动，那么滚动更新将会停止
@@ -168,11 +188,11 @@ deployment.extensions/nginx-deployment successfully rolled out
 
 在spec.strategy.rollingUpdate.maxUnavailable,spec.strategy.rollingUpdate.maxSurge中更改,需要指定spec.strategy中指定type为RollingUpdate,maxSurge指定的是除了DESIRED之外在一次滚动中，Deployment控制器还可以创建多少新Pod，maxUnavailable指定的是在一次滚动中Deployment控制器可以删除多少旧Pod。可以指定具体数字，也可以指定一个百分比
 
+## Deployment对应用进行版本控制的具体原理
 
+Deployment实际上是一个**两层控制器**
 
-### Deployment对应用进行版本控制的具体原理
-
-Deployment实际上是一个**两层控制器**首先，它通过ReplicaSet的个数来描述应用的版本;然后通过ReplicaSet的属性(如:replicas的值)来保障Pod的副本数量
+首先，它通过ReplicaSet的个数来描述应用的版本;然后通过ReplicaSet的属性(如:replicas的值)来保障Pod的副本数量
 
 随着应用版本的不断增加，Kubernetes中还是会以同一个Deployment保存很多很多不同的ReplicaSet，在Deployment对象中有一个字段，spec.revisionHistoryLimit，就是kubernetes保留的"历史版本"个数，如果把它设置为0，那么就不能做回滚操作了
 

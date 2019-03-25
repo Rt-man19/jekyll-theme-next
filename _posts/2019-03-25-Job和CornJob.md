@@ -1,4 +1,14 @@
-[toc]
+---
+
+title: Job和CronJob
+
+categories:
+
+- Container
+
+tags:
+
+---
 
 ### Job和CornJob简介和使用
 Job和CornJob通常编排对象是离线业务，也叫作Batch Job(计算业务).这种业务在计算完成后就退出了而且此时如果用Deployment编排的话,Pod会在计算结束后退出,然后被Deployment Controller不断的重启.
