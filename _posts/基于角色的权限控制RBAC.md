@@ -1,0 +1,213 @@
+***RBAC***
+
+在kubernetes中,所有的API对象都保存在Etcd里,但是对API对象的操作却一定都是由kube-apiserver实现的，其中一个很重要的原因就是:需要apiserver来完成授权工作
+在kubernetes中,负责完成授权工作的机制就是RBAC:基于角色的控制权限(Role-Base-Access-Control)
+
+### 三个最基本概念
+- Role: 角色,其实就是一组规则,定义对API对象操作的权限
+- Subject: 被作用者,可以使用在kubernetes中定义的用户
+- RoleBinding: 使角色和被作用者进行绑定
+
+
+#### Role
+实际上Role本身就是一个kubernetes的API对象
+
+````yaml
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  namespace: mynamespace
+  name: example-role
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "watch","list"]
+````
+
+首先这个Role对象指定了产生出作用的Namespace是mynamespace。
+
+Namespace是kubernetes中的一个逻辑单位,不同Namespace的API对象在通过kubectl进行操作的时候,是相互隔离的。但是这只是逻辑上的隔离，Namespace并不会提供任何实际的隔离或者多租户能力,如果此字段不指定的话默认的Namespace为default
+
+然后Role对象的rules字段,就是他所定义的权限规则,上面这条定义的意义就是:<font size=3 color=red>允许被作用者对mynamespace下面的Pod对象进行"GET","WATCH","List"操作</font>   如果要赋予example-role角色所有的权限,可以给它指定一个verbs字段的全集,verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+
+
+#### RoleBinding
+
+RoleBinding 本身也是一个kubernetes中的API对象
+````yaml
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: example-rolebinding
+  namespace: mynamespace
+subjects:
+- kind: User
+  name: example-user
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: example-role
+  apiGroup: rbac.authorization.k8s.io
+````
+
+在RoleBinding中subjects定义了被作用者,它的类型是User,即是kubernetes中的用户,这个用户的名字是example-role
+
+实际上kubernetes中的User只是一个授权系统里的逻辑概念。它需要外部认证服务,比如keystone.或者可以直接给APIServer指定一个用户名/密码文件。
+
+roleRef字段,通过这个字段RoleBinding对象就可以直接通过名字,来引用我们之前定义的Role对象(example-role) 从而定义了Subject和Role之间的绑定关系
+
+
+<font size=3 color=red>Role 和 RoleBinding 对象都是 Namespace对象,它们对权限的限制规则仅在它们自己的 Namespace 内有效，roleRef也只能引用当前Namespace里的Role对象<font>
+
+**对非Namespace对象的授权**
+
+对非Namespace对象(如Node)授权,或者一个Role想要作用于所有的Namespace的时候,必须要使用ClusterRole和ClusterRoleBinding这个组合,他们和Role/RoleBinding的定义完全一样,除了没有namespace字段
+
+````yaml
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: example-clusterrole
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get","watch","list"]
+````
+````yaml
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: example-clusterrolebinding
+subjects:
+- kind: User
+  name: example-user
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: example-clusterrole
+  apiGroup: rbac.authorization.k8s.io
+````
+
+#### ServiceAccount
+
+通常情况下，在RoleBinding中不会使用"用户"这个功能,而是直接使用Kubernetes的"内置用户"
+
+**ServiceAccount的定义**
+````yaml
+kind: ServiceAccount
+apiVersion: v1
+metadata:
+  namespace: mynamespace
+  name: example-sa
+````
+**通过RoleBinding的yaml文件来给ServiceAccount分配权限**
+````yaml
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  namespace: mynamespace
+  name: example-rolebinding
+subjects:
+- kind: ServiceAccount
+  name: example-sa
+  namespace: mynamespace
+roleRef:
+  kind: Role
+  name: example-role
+  apiGroup: rbac.authorization.k8s.io
+````
+
+**在Pod中使用ServiceAccount**
+````yaml
+kind: Pod
+apiVersion: v1
+metadata:
+  namespace: mynamespace
+  name: sa-token-test
+spec:
+  containers:
+  - name: nginx
+    image: nginx:1.7.9
+  ServiceAccount: example-sa
+````
+
+如果Pod中没有声明ServiceAccount,那么kubernetes会自动在其namespace下创建一个名为default的ServiceAccount然后分配给Pod
+
+**ServiceAccount用户组**
+
+除了前面的"用户"外,kubernetes还有"用户组"的概念,如果为kubernetes配置了外部认证服务,那么"用户组"就由外部认证服务提供
+
+对于ServiceAccount来说,"用户组"的概念同样适用。
+实际上一个ServiceAccount在kubernetes中对应的用户是
+````text
+system:serviceaccount:<ServiceAccount 名字>
+````
+而它对应的内置用户组的名字就是:
+````text
+system:serviceaccounts:<Namespace 名字>
+````
+
+***定义"用户组"***
+````yaml
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  namespace: mynamespace
+  name: example-rolebinding
+subjects:
+- kind: Group
+  name: system:serviceaccounts:mynamespace
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: example-role
+  apiGroup: rbac.authorization.k8s.io
+````
+这就意味着example-role这个用户的权限作用于mynamespace中的所有ServiceAccount
+````yaml
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  namespace: mynamespace
+  name: example-rolebinding
+subjects:
+- kind: Group
+  name: system:serviceaccounts
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: example-role
+  apiGroup: rbac.authorization.k8s.io
+````
+这个例子的意思就是example-role用户的权限作用于系统中的所有ServiceAccount
+
+**注意**
+在Kubernetes 中已经内置了很多个为系统保留的 ClusterRole,他们的名字都以system: 开头,可以通过kubectl get clusterrole查看
+
+一般来说系统ClusterRole是绑定给Kubernetes系统组件对应的ServiceAccount使用的, 比如:一个名叫system:kube-scheduler的ClusterRole,它定义的规则就是kube-scheduler运行所需要的必要权限
+
+除此之外,Kubernetes还提供了四个预先定义好的ClusterRole
+- cluster-admin
+- admin
+- edit
+- view
+其中cluster-admin在系统中的权限最高! verbs=*
+
+
+
+#### 案例: 如何给所有的Namespace绑定一个只读的角色?
+example-rolebinding.yaml
+````yaml
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: readonly-all-default
+subjects:
+- kind: ServiceAccount
+  name: system.serviceaccount.default
+roleRef:
+  kind: ClusterRole
+  name: view
+  apiGroup: rbac.authorization.k8s.io
+````

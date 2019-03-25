@@ -1,0 +1,427 @@
+**Pod**
+
+Pod是Kubernetes中最小的编排单位，而不是容器。将这个设计落实到API对象上，容器就成了Pod属性里的一个普通的字段。
+
+Pod扮演的是传统部署环境里"虚拟机"的角色,这样的设计是为了让用户从传统环境到容器环境的迁移更加平滑
+### Pod独享的生命周期
+Pod的生命周期变化主要体现在Pod API对象的Status部分。其中pod.status.phase就是Pod的当前状态，他有以下几种可能:
+- Pending: 这个状态说明，Pod的YAML文件已经提交给了Kubernetes,API对象已经被创建并保存在Etcd中，但是这个Pod里有些容器因为某种因素而不能被顺利创建
+- Running: 这个状态说明,Pod已经调度成功,跟一个具体的Node绑定,他包含的容器都已经创建成功,并且至少有一个在运行中
+- Succeeded: 这个状态说明，Pod里的所有容器都正常运行完毕,并且已经退出了，这种情况在运行一次性人物时最为常见
+- Failed: 这个状态说名: Pod里至少有一个容器以不正常的状态退出
+- Unknown: 这是一个异常状态,意味着Pod的状态不能持续的被kubelet汇报给kube-apiserver,可能是主从节点的通信出现问题
+
+更近一步的话,Pod的生命周期还可以细分为一组Conditions，其中包含Type,Initialized,Ready,ContainersReady,PodScheduled，他们主要用于描述造成当前状态的具体原因
+如: Pod 当前状态是Pending,对应的Condition是Unschedulable，这就意味着它的调度出现了问题
+这其中Ready状态非常值得关注,它意味着Pod不仅已经正常启动，而且已经可以对外提供服务了，两者之间(running和Ready)是有区别的
+
+
+### Pod对象的属性
+
+**spec.NodeSelector:** 将Pod与Node进行绑定
+````yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: example1
+spec:
+  ...
+  ...
+  nodeSelector:
+    disktype: ssd
+````
+这样一个配置意味着这个Pod只能再携带disktype: ssd标签的节点上被调度
+
+**spec.NodeName:** 如果这个字段被赋值，kubernetes就认为这个Pod已经经过调度，调度结果就是赋值的节点名字,这个字段一般由调度器负责设置，用户也可以设置它来骗过调度器,这个做法一般是在调试的时候才会用到
+
+**spec.HostAliases:** 定义了Pod的host文件(如: /etc/hosts)里的内容
+````yaml
+apiVersion: v1
+kind: Pod
+...
+spec:
+  hostAliases:
+  - ip: "1.2.3.4"
+    hostnames:
+    - "foo.host"
+    - "bar.host"
+...
+````
+在容器启动后,/etc/hosts 文件的内容是这样的:
+
+![image](7F3D53A78B514D52AB78D85D4F96F1A2)
+
+在kubernetes中，如果要设置hosts文件一定要通过这种方式，否则如果直接修改了hosts文件的话在Pod被删除重建之后kubelet会自动覆盖掉丢该的内容
+
+**spec.shareProcessNamespace: true :** 使Pod中的容器共享Pid Namespace
+example.yaml
+````yaml
+apiVersion: v1
+kind: Pod
+metadata: 
+  name: nginx
+spec:
+  shareProcessNamespace: true
+  containers:
+  - name: nginx
+    image: nginx:1.7.9
+  - name: shell
+    image: busybox
+    stdin: true
+    tty: true
+````
+在这个例子中，定义了两个容器，一个是nginx容器，一个是开启了stdin和tty的shell容器。在Pod被创建之后就可以使用shell容器的tty 跟这个容器交互了
+````shell
+kubectl create -f example.yaml
+````
+之后使用kubectl attach 命令连接到shell容器的tty上:
+````shell
+kubectl attach -ti nginx -c shell
+````
+这样就可以在shell容器里执行ps指令,查看所有正在运行的进程
+````shell
+/ # ps ax
+````
+![image](4DD1E66026A249269CA8EAE40B0780F5)
+
+可以看到在这个容器里,不仅可以看到它本身的ps ax指令,还可以看到nginx容器的进程以及Infra容器的/pause进程.原因是它们共享了同一个Pid Namespace。
+
+
+
+**spec.hostNetwork spec.hostIPC spec.hostPID:** 共享宿主机的一些Namespace
+````yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx
+spec:
+  hostNetwork: true
+  hostPID: true
+  hostIPC: true
+  containers:
+  - name: nginx
+    image: nginx:1.7.9
+  - name: shell
+    image: busybox
+    stdin: true
+    tty: true
+````
+在这个Pod中，定义了共享宿主机的Network,IPC,PID Namespace,这就意味着这个Pod的所有的容器会直接使用宿主机的网络/直接与宿主机进行IPC通信看到宿主机的进程
+
+**spec.initContainers:** 在Pod中,所有InitContainer定义的容器都会比spec.containers定义的用户容器先启动,并且,InitContainer容器会按照顺序逐一启动,而直到他们都启动并且退出了才会启动用户容器
+
+**containers字段:** 关于Pod容器的定义
+
+***spec.containers.ImagePullPoliy:*** 定义了镜像拉取策略
+
+默认值时Always,即每次创建Pod都重新拉取一次镜像
+Never: Pod永远不会主动拉取镜像
+IfNotPresent: 只有当宿主机不存在镜像时才会拉取镜像
+
+***spec.containers.lifecycle:***他的定义是Container Lifecycle Hooks,作用是在容器状态发生变化时触发一系列"钩子"
+````yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: lifecycle-demo
+spec:
+  containers:
+  - name: lifecycle-demo-container
+    image: nginx:1.7.9
+    lifecycle:
+      postStart:
+        exec:
+          command: ["/bin/sh", "-c", "echo hello from the poststart handler > /usr/share/message"]
+      preStop:
+        exec:
+          command: ["/usr/sbin/nginx", "-s","quit"]
+````
+这个Pod定义了一个nginx镜像的容器,在这个YAML文件的Containers部分设置了一个postStart和preStop参数
+
+**spec.containers.lifecycle.postStart:** 
+
+指的是在容器启动后立刻执行一个指定的操作。postStart操作虽然是在Docker容器ENTRYPOINT执行之后,但它并不严格保证执行顺序,可能在postStart启动时,ENTRYPOINT还没结束.如果postStart执行超时或者错误,Kubernetes会在该Pod的Events中报出该容器启动失败的错误信息导致Pod 也处于失败状态
+
+**spec.containers.lifecycle.preStop:**
+
+和postStart类似，但是发生的时机是在容器被杀死之前。preStop的操作是同步的,他会阻塞当前容器杀死流程,直到这个Hook定义操作完成之后,才允许容器被杀死。
+
+##### Projected Volume
+Projected Volume的含义: 在kubernetes中有几种特殊的Volume,他们存在的意义不是为了存放容器里的数据，也不是用来进行容器和宿主机之间的数据交换。这些特殊的Volume的作用是为容器提供预先定义好的数据,从容器角度来看这些Volume里的信息就是仿佛被投射到容器当中的。
+目前为止(v1.11),kubernetes支持的Projected Volume一共有四种:
+- Secret
+- ConfigMap
+- Downward API
+- ServiceAccountToken(一种特殊的Secret)
+
+**Secret**
+
+Secret他的作用是帮你把Pod想要访问的加密数据存放到Etcd中,然后就可以通过在Pod的容器里挂载Volume的方式访问到这些Secret里保存的信息了。
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-projected-volume
+spec:
+  containers:
+  - name: test-secret-volume
+    image: busybox
+    args:
+    - sleep
+    - "86400"
+    volumeMounts:
+    - name: mysql-cred
+      mountPath: "/projected-volume"
+      readOnly: true
+    volumes:
+    - name: mysql-cred
+      projected:
+        sources:
+        - secret:
+            name: user
+        - secret:
+            name: pass
+```
+
+这个Pod中定义了一个简单的容器,它声明挂载的Volume并不是常见的emptyDir或者hostPath类型,而是projected类型,而这个volume的数据来源(sources)则是名为user和pass的Secret对象,分别对应的是数据库的用户名密码
+这里用到的数据库的用户名、密码正式以Secret对象的方式交给Kubernetes保存的，这个操作的指令如下:
+```shell
+# cat ./username.txt
+admin
+# cat ./password.txt
+c1oudc0w!
+
+# kubectl create secret generic user --from-file=./username.txt
+# kubectl create secret generic pass --from-file=./password.txt
+```
+这里username.txt和password.txt文件里存放的就是用户名和密码，而user和pass则是为Secret对象指定的名字，如果想要查看Secret对象的话执行一条kubectl get就可以了:
+```shell
+# kubectl get secrets
+```
+![image](B8F679E4E743482E9B2AB7BD96F3C3C8)
+
+除了kubectl create secret 指令外 还可以直接编写YAML文件来创建Secret对象
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mysecret
+type: Opaque
+data:
+  user: cm9vdAo=
+  pass: MXFhejFRQVoK
+```
+通过YAML文件方式创建Secret对象只有一个，但它的data字段是以key-value的格式保存了两份Secret数据. Secret对象要求这些数据必须是警告Base64转码的,以免出现铭文密码的安全隐患
+```shell
+# echo -n 'root' | base64
+cm9vdAo=
+# echo -n '1qaz1QAZ' | base64
+MXFhejFRQVoK
+```
+***完整实践:***
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mysecret
+type: Opaque
+data:
+  user: cm9vdAo=
+  pass: MXFhejFRQVoK
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-project-volume
+spec:
+  containers:
+  - name: test-secret-volume
+    image: busybox
+    imagePullPolicy: IfNotPresent
+    args: 
+    - sleep
+    - "86400"
+    volumeMounts:
+    - name: mysql-cred
+      mountPath: "/projected-volume"
+      readOnly: true
+    
+  volumes:
+  - name: mysql-cred
+    projected:
+      sources:
+      - secret:
+          name: mysecret
+```
+
+```shell
+# kubectl exec -ti test-project-volume -- /bin/sh
+/ # ls /project-volume
+/ # cat /project-volume/user
+/ # cat /project-volume/pass
+```
+![image](2B60818696A0494C86F32AB641B9D790)
+
+
+**ConfigMap**
+与Secret类似,区别在于ConfigMap保存的是不需要加密的、应用所需的配置信息.ConfigMap与Secret的用户几乎一致，可以使用kubectl create configmap从文件或者目录创建,也可以直接编写ConfigMap对象的YAML文件.
+
+***案例:**
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: myconfigmap
+data:
+  userauth: |
+    username=root
+    password=1qaz!QAZ
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-project-volume-2
+spec:
+  containers:
+  - name: test-project-volume-2
+    image: busybox
+    imagePullPolicy: IfNotPresent
+    args:
+    - sleep
+    - "86400"
+    volumeMounts:
+    - name: test-cred
+      mountPath: /projected-volume
+      readOnly: true
+  volumes:
+  - name: test-cred
+    configMap:
+      name: myconfigmap
+```
+```shell
+# kubectl exec -ti test-project-volume-2 -- /bin/sh
+/ # cat /project-volume/userauth
+```
+![image](4563EF1180834E02AB75C2FDC6DAB4B0)
+
+**Downward API**
+Downward API 的作用是让Pod里的容器能够直接获取到这个Pod API对向本身的信息
+
+***实例***
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-downwardapi-volume
+  labels:
+    zone: cn-est-coast
+    cluster: test-cluster1
+    rack: rack-22
+spec:
+  containers:
+  - name: client-container
+    image: busybox
+    imagePullPolicy: IfNotPresent
+    command: ["sh","-c"]
+    args:
+    - while true;do
+        if [[ -e /etc/podinfo/lables ]]; then
+          echo -en '\n\n'; cat /etc/podinfo/lables;
+        fi;
+        sleep 5;
+      done;
+    volumeMounts:
+    - name: podinfo
+      mountPath: /etc/podinfo
+      readOnly: false
+  volumes:
+  - name: podinfo
+    projected:
+      sources:
+      - downwardAPI:
+          items:
+          - path: "labels"
+            fieldRef:
+              fieldPath: metadata.labels
+```
+这个YAML中定义了一个简单的容器，声明了一个projected类型的volume,只不过volume的数据来源变成了Downward API。这个Downward API Volume则声明了要暴露Pod的metadata.labels信息给容器
+通过这样的声明方式，当前Pod的Label是字段的值就会被Kubernetes自动挂载成为容器里的/etc/podinfo/labels文件
+并且这个容器的启动命令，就是不断的打印出/etc/podinfo/labels里的内容,所以当创建了这个Pod之后就可以通过kubectl logs查看这些Labels字段被打印出来
+
+Secret、ConfigMap、Downward API这三种Projected Volume定义的信息打斗可以通过环境变量的方式出现在容器里，但是通过环境变量获取这些信息的方式不具备自动更新的能力
+
+## ServiceAccount
+
+ServiceAccount的作用就是Kubernetes系统内置的一种认证账户，它是kubernetes进行权限分配的对象，比如ServiceAccount A 可以只被允许对Kubernetes API进行GET操作，ServiceAccount可以有Kubernetes API的所有操作权限
+
+像这样的ServiceAccount的授权信息和文件实际上保存在它所绑定的一个特殊的Secret对象里的，这个特殊的Secret对象就是**ServiceAccountToken**任何运行在kubernetes集群的应用都必须使用这个ServiceAccountToken里保存的授权信息，也就是Token，这样才能合法的访问APIServer
+
+当查看运行在Kubernetes集群中的Pod时会发现，每个Pod都已经自动声明了一个类型是Secret、名为default-token-xxx的Volume,然后自动挂载在每个容器的一个固定目录。Kubernetes会在创建Pod的时候自动在它的spec.volumes部分添加上默认ServiceAccountToken的定义然后自动给每个容器加上了对应的volumeMounts字段，这个过程对于用户是透明的。
+
+一旦Pod创建完成，容器里的应用就可以直接从这个默认ServiceAccountToken的挂载目录里访问到授权信息和文件，所以应用只要直接加载授权文件就可以访问并操作Kubernetes API了.
+
+这种把Kubernetes客户端以容器的方式运行在集群中然后使用default ServiceAccount自动授权的方式被称作"InClusterConfig".
+
+## 容器健康检查和恢复机制
+
+在kubernetes中可以为Pod里的容器定义一个健康检查 "探针"(Probe),这样kubelet就会根据这个Probe的返回值决定这个容器的状态，而不是直接以容器进行是否运行作为依据，这种机制是生产环境保证应用健康存活的重要手段
+
+**案例**
+
+```yaml
+#### test-liveness-exec.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    test: liveness
+  name: test-liveness-exec
+spec:
+  containers:
+  - name: liveness
+    image: busybox
+    imagePullPolicy: IfNotPresent
+    args:
+    - /bin/sh
+    - -c
+    - touch /tmp/healthy; sleep 30; rm -rf /tmp/healthy; sleep 600
+    livenessProbe:
+      exec:
+        command:
+        - cat
+        - /tmp/healthy
+      initialDelaySeconds: 5
+      periodSeconds: 5
+```
+```shell
+####创建Pod
+# kubectl create -f test-liveness-exec.yaml
+####查看Pod状态
+# kubctl get pod
+NAME                 READY   STATUS    RESTARTS   AGE
+test-liveness-exec   1/1     Running   17         52m
+#########可以看到已经通过健康检查进入了Running状态，过三十秒之后再查看Pod的Events:
+# kubectl describe pod test-liveness-exec
+  Type     Reason             Age                    From                      Message
+  ----     ------             ----                   ----                      -------
+ Warning  Unhealthy          18m (x37 over 53m)     kubelet, 192.168.121.141  Liveness probe failed: cat: can't open '/tmp/healthy': No such file or directory
+ ```
+ 如果这个时候再查看pod会发现，Pod的状态并没有变成Field,这是因为Kubernetes里的Pod恢复机制,也叫restartPolicy,它是Pod的Spec部分的一个标准字段(pod.spec.restartPolicy),默认值是Always,即任何时候这个容器发生了异常一定会被重新创建(由于Kubernetes中没有docker的stop 语义，所以虽然是Restart但实际上确实重新创建了容器)
+ 
+ Pod的恢复过程永远都是发生在当前节点，而不会跑到别的节点上。事实上如果一个Pod与一个节点绑定，除非这个绑定发生了变化(pod.spec.node 字段被修改)，否则它永远都不会离开这个节点，这说明如果这个宿主机宕机了这个pod也不会主动迁移到其他节点上。如果想要Pod出现在其他的高可用节点上必须使用Deployment这样的控制器来管理Pod
+ 
+ restartPolicy有三个值:
+ - Always: 默认值，在任何情况下只要容器不在运行状态就自动重启容器
+ - Onfailure: 只在容器异常时才自动重启容器
+ - Never: 从不重启容器
+ 
+kubernetes的官方文档吧restartPolicy和Pod里容器的状态以及Pod状态的对应关系总结了非常复杂的一大堆情况，实际上它们都符合下面两个基本的设计原理:
+- 只要Pod的restartPolicy指定的策略允许重启异常容器,那么这个Pod就回保持Running状态并进行容器重启,否则Pod将会进入Failed状态
+- 对于包含多个容器的Pod，只要它里面有容器进入异常状态后,Pod才会进入Failed状态。
+
+
+Pod除了livenessProbe之外还有readinessProbe,两者定义方式相似，但功能完全不同,readinessProbe 检查结果的成功与否决定的是这个Pod是不是能通过Service的方式访问到
+
+## PodPreset
