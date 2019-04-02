@@ -4,7 +4,7 @@ title: Hadoop HA & YARN HA
 
 categories:
 
-- Container
+- 大数据
 
 tags:
 
