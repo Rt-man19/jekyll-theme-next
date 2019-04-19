@@ -45,3 +45,5 @@ Hive默认的存储格式为Text File 可以使用hive.default.fileformat来更�
 
 ## 列式存储
 
+
+
