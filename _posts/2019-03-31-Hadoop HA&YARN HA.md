@@ -4,7 +4,7 @@ title: Hadoop HA & YARN HA
 
 categories:
 
-- 大数据
+- Hadoop
 
 tags:
 
