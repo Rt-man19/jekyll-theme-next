@@ -731,9 +731,9 @@ vendors:
 
 
 # Assets
-css: assets/css
-js: assets/js
-images: assets/images
+css: /assets/css
+js: /assets/js
+images: /assets/images
 
 # Theme version
 version: 5.1.1
