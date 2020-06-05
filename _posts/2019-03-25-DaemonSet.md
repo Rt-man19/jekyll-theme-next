@@ -1,13 +1,9 @@
 ---
-
-title: DaemonSet
-
-categories:
-
-- Container
-
+title: Kubernetes资源对象管理之DaemonSet
 tags:
-
+  - Kubernetes
+categories:
+  - 容器
 ---
 
 

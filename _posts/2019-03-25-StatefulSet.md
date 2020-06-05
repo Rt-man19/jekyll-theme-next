@@ -1,13 +1,9 @@
 ---
-
-title: StatefulSet
-
-categories:
-
-- Container
-
+title: Kubernetes资源对象管理之StatefulSet
 tags:
-
+  - Kubernetes
+categories:
+  - 容器
 ---
 
 # deployment的问题

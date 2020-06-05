@@ -1,13 +1,9 @@
 ---
-
-title: Job和CronJob
-
-categories:
-
-- Container
-
+title: Kubernetes资源对象管理之Job和CronJob
 tags:
-
+  - Kubernetes
+categories:
+  - 容器
 ---
 
 ### Job和CornJob简介和使用

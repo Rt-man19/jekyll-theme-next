@@ -1,13 +1,9 @@
 ---
-
-title: ReplicaSet
-
-categories:
-
-- Container
-
+title: Kubernetes资源对象管理之ReplicaSet
 tags:
-
+  - Kubernetes
+categories:
+  - 容器
 ---
 
 #  什么是ReplicaSet

@@ -1,13 +1,10 @@
 ---
-
-title: Hadoop HA & YARN HA
-
-categories:
-
-- Hadoop
-
+title: Hadoop HA架构
 tags:
-
+  - 大数据
+  - Hadoop
+categories:
+  - 大数据
 ---
 
 # Hadoop HA
